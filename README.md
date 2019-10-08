@@ -11,7 +11,7 @@ $json_db = new JSONDB( __DIR__ ); // Or passing the directory of your json files
 ```
 
 #### Inserting
-Insert into your new JSON file. Using *users.json* as example here
+Insert into your new JSON file. Using *users.json* as example here. use flag true for autmatic id,, it generate a unique field named 'uid'
 
 **NB:** *Columns inserted first will be the only allowed column on other inserts*
 
@@ -22,7 +22,7 @@ $json_db->insert( 'users.json',
 		'name' => 'Thomas', 
 		'state' => 'Nigeria', 
 		'age' => 22 
-	]
+	],true
 );
 ```
 
