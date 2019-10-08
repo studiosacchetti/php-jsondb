@@ -1,416 +1,436 @@
-<?php 
-declare( strict_types = 1 );
+<?php
+
+declare( strict_types=1 );
+
 namespace Jajo;
 
 class JSONDB {
-	public $file, $content = [];
-	private $where, $select, $merge, $update;
-	private $delete = false;
-	private $last_indexes = [];
-	private $order_by = [];
-	protected $dir;
-	private $json_opts = [];
-	const ASC = 1;
-	const DESC = 0;
 
-	public function __construct( $dir, $json_encode_opt = JSON_UNESCAPED_UNICODE|JSON_PRETTY_PRINT ) {
-		$this->dir = $dir;
-		$this->json_opts[ 'encode' ] = $json_encode_opt;
-	}
+    public $file, $content = [];
+    private $where, $select, $merge, $update;
+    private $delete = false;
+    private $last_indexes = [];
+    private $order_by = [];
+    protected $dir;
+    private $json_opts = [];
 
-	private function check_file() {
-		/**
-		 * Checks and validates if JSON file exists
-		 *
-		 * @return bool
-		*/
+    const ASC = 1;
+    const DESC = 0;
 
-		// Checks if JSON file exists, if not create
-		if( !file_exists( $this->file ) ) {
-			$this->commit();
-		}
+    public function __construct($dir, $json_encode_opt = JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) {
+        $this->dir = $dir;
+        $this->json_opts['encode'] = $json_encode_opt;
+    }
 
-		// Read content of JSON file
-		$content = file_get_contents( $this->file );
-		$content = json_decode( $content );
+    private function check_file() {
+        /**
+         * Checks and validates if JSON file exists
+         *
+         * @return bool
+         */
+        // Checks if JSON file exists, if not create
+        if (!file_exists($this->file)) {
+            $this->commit();
+        }
 
-		// Check if its arrays of jSON
-		if( !is_array( $content ) && is_object( $content ) ) {
-			throw new \Exception( 'An array of json is required: Json data enclosed with []' );
-			return false;
-		}
-		// An invalid jSON file
-		elseif( !is_array( $content ) && !is_object( $content ) ) {
-			throw new \Exception( 'json is invalid' );
-			return false;
-		}
-		else
-			return true;
-	}
+        // Read content of JSON file
+        $content = file_get_contents($this->file);
+        $content = json_decode($content);
 
-	public function select( $args = '*' ) {
-		/**
-		 * Explodes the selected columns into array
-		 *
-		 * @param type $args Optional. Default *
-		 * @return type object
-		*/
+        // Check if its arrays of jSON
+        if (!is_array($content) && is_object($content)) {
+            throw new \Exception('An array of json is required: Json data enclosed with []');
+            return false;
+        }
+        // An invalid jSON file
+        elseif (!is_array($content) && !is_object($content)) {
+            throw new \Exception('json is invalid');
+            return false;
+        } else {
+            return true;
+        }
+    }
 
-		// Explode to array
-		$this->select = explode( ',', $args );
-		// Remove whitespaces
-		$this->select = array_map( 'trim', $this->select );
-		// Remove empty values
-		$this->select = array_filter( $this->select );
+    public function select($args = '*') {
+        /**
+         * Explodes the selected columns into array
+         *
+         * @param type $args Optional. Default *
+         * @return type object
+         */
+        // Explode to array
+        $this->select = explode(',', $args);
+        // Remove whitespaces
+        $this->select = array_map('trim', $this->select);
+        // Remove empty values
+        $this->select = array_filter($this->select);
 
-		return $this;
-	}
+        return $this;
+    }
 
-	public function from( $file ) {
-		/**
-		 * Loads the jSON file
-		 *
-		 * @param type $file. Accepts file path to jSON file
-		 * @return type object
-		*/
+    public function from($file) {
+        /**
+         * Loads the jSON file
+         *
+         * @param type $file. Accepts file path to jSON file
+         * @return type object
+         */
+        $this->file = sprintf('%s/%s.json', $this->dir, str_replace('.json', '', $file)); // Adding .json extension is no longer necessary
+        // Reset where
+        $this->where([]);
+        $this->content = '';
 
-		$this->file = sprintf( '%s/%s.json', $this->dir, str_replace( '.json', '', $file ) ); // Adding .json extension is no longer necessary
+        // Reset order by
+        $this->order_by = [];
 
-		// Reset where
-		$this->where( [] );
-		$this->content = '';
+        if ($this->check_file()) {
+            $this->content = (array) json_decode(file_get_contents($this->file));
+        }
+        return $this;
+    }
 
-		// Reset order by
-		$this->order_by = [];
+    public function where(array $columns, $merge = 'OR') {
+        $this->where = $columns;
+        $this->merge = $merge;
+        return $this;
+    }
 
-		if( $this->check_file() ) {
-			$this->content = ( array ) json_decode( file_get_contents( $this->file ) );
-		}
-		return $this;
-	}
+    public function delete() {
+        $this->delete = true;
+        return $this;
+    }
 
-	public function where( array $columns, $merge = 'OR' ) {
-		$this->where = $columns;
-		$this->merge = $merge;
-		return $this;
-	}
+    public function update(array $columns) {
+        $this->update = $columns;
+        return $this;
+    }
 
-	public function delete() {
-		$this->delete = true;
-		return $this;
-	}
+    private function _last_index($column) {
 
-	public function update( array $columns ) {
-		$this->update = $columns;
-		return $this;
-	}
 
-	public function insert( $file, array $values ) : array {
-		$this->from( $file );
+        $content = $this->_process_order_by($this->content);
+        $records = count($content);
+        if ($records == 0) {
+            $last_index = 1;
+        } else {
+            $this->last_indexes = $content[( $records - 1 )];
+            $last_index = $this->last_indexes->{$column} + 1;
+        }
+       
 
-		if( !empty( $this->content[ 0 ] ) ) {
-			$nulls = array_diff_key( ( array ) $this->content[ 0 ], $values );
-			if( $nulls ) {
-				$nulls = array_map( function() {
-					return '';
-				}, $nulls );
-				$values = array_merge( $values, $nulls );
-			}
-		}
+        //var_dump($this->last_indexes->id);
+        return $last_index;
+    }
 
-		if( !empty( $this->content ) && array_diff_key( $values, (array ) $this->content[ 0 ] ) ) {
-			throw new Exception( 'Columns must match as of the first row' );
-		}
-		else {
-			$this->content[] = ( object ) $values;
-			$this->last_indexes = [ ( count( $this->content ) - 1 ) ];
-			$this->commit();
-		}
-		return $this->last_indexes;
-	}
+    public function last_index($file, $column) {
+        $this->from($file);
+        $last_index = 0;
+        if (!empty($column) && !empty($this->content)) {
+            $last_index = $this->_last_index($column);
+        }
+        return $last_index;
+    }
 
-	public function commit() {
-		$f = fopen( $this->file, 'w+' );
-		fwrite( $f, ( !$this->content ? '[]' : json_encode( $this->content, $this->json_opts[ 'encode' ] ) ) );
-		fclose( $f );
-	}
+    public function insert($file, array $values, $uid = false): array {
+        $this->from($file);
+        if ($uid) {
+           $values['uid'] = $this->_last_index('uid');
+        }
 
-	private function _update() {
-		if( !empty( $this->last_indexes ) && !empty( $this->where ) ) {
-			foreach( $this->content as $i => $v ) {
-				if( in_array( $i, $this->last_indexes ) ) {
-					$content = ( array ) $this->content[ $i ];
-					if( !array_diff_key( $this->update, $content ) ) {
-						$this->content[ $i ] = ( object ) array_merge( $content, $this->update );
-					}
-					else 
-						throw new Exception( 'Update method has an off key' );
-				}
-				else 
-					continue;
-			}
-		}
-		elseif( !empty( $this->where ) && empty( $this->last_indexes ) ) {
-			null;
-		}
-		else {
-			foreach( $this->content as $i => $v ) {
-				$content = ( array ) $this->content[ $i ];
-				if( !array_diff_key( $this->update, $content ) ) 
-					$this->content[ $i ] = ( object ) array_merge( $content, $this->update );
-				else 
-					throw new Exception( 'Update method has an off key ' );
-			}
-		}
-	}
+        if (!empty($this->content[0])) {
 
-	public function trigger() {
-		$content = ( !empty( $this->where ) ? $this->where_result() : $this->content );
-		$return = false;
-		if( $this->delete ) {
-			if( !empty( $this->last_indexes ) && !empty( $this->where ) ) {
-				$this->content = array_map( function( $index, $value ) {
-					if( !in_array( $index, $this->last_indexes ) ) 
-						return $value;
-				}, array_keys( $this->content ), $this->content );
-				$this->content = array_filter( $this->content );
-				//$this->content = array_values( $this->content );
-			}
-			elseif( empty( $this->where ) && empty( $this->last_indexes ) ) {
-				$this->content = array();
-			}
-			
-			$return = true;
-			$this->delete = false;
-		}
-		elseif( !empty( $this->update ) ) {
-			$this->_update();
-			$this->update = [];
-		}
-		else 
-			$return = false;
-		$this->commit();
-		return $this;
-	}
 
-	private function where_result() {
-		/*
-			Validates the where statement values
-		*/
+            $nulls = array_diff_key((array) $this->content[0], $values);
+            if ($nulls) {
+                $nulls = array_map(function() {
+                    return '';
+                }, $nulls);
+                $values = array_merge($values, $nulls);
+            }
+        }
+//var_dump($values);
+        if (!empty($this->content) && array_diff_key($values, (array) $this->content[0])) {
+            throw new \Exception('Columns must match as of the first row');
+        } else {
+            $this->content[] = (object) $values;
+            $this->last_indexes = [( count($this->content) - 1 )];
+            $this->commit();
+        }
+        return $this->last_indexes;
+    }
 
-		if( $this->merge == 'AND' ) {
-			return $this->where_and_result();
-		}
-		else {
-			$r = [];
+    public function commit() {
+        $f = fopen($this->file, 'w+');
+        fwrite($f, (!$this->content ? '[]' : json_encode($this->content, $this->json_opts['encode'])));
+        fclose($f);
+    }
 
-			// Loop through the existing values. Ge the index and row
-			foreach( $this->content as $index => $row ) {
+    private function _update() {
+        if (!empty($this->last_indexes) && !empty($this->where)) {
+            foreach ($this->content as $i => $v) {
+                if (in_array($i, $this->last_indexes)) {
+                    $content = (array) $this->content[$i];
+                    if (!array_diff_key($this->update, $content)) {
+                        $this->content[$i] = (object) array_merge($content, $this->update);
+                    } else {
+                        throw new Exception('Update method has an off key');
+                    }
+                } else {
+                    continue;
+                }
+            }
+        } elseif (!empty($this->where) && empty($this->last_indexes)) {
+            null;
+        } else {
+            foreach ($this->content as $i => $v) {
+                $content = (array) $this->content[$i];
+                if (!array_diff_key($this->update, $content))
+                    $this->content[$i] = (object) array_merge($content, $this->update);
+                else
+                    throw new Exception('Update method has an off key ');
+            }
+        }
+    }
 
-				// Make sure its array data type
-				$row = ( array ) $row;
+    public function trigger() {
+        $content = (!empty($this->where) ? $this->where_result() : $this->content );
+        $return = false;
+        if ($this->delete) {
+            if (!empty($this->last_indexes) && !empty($this->where)) {
+                $this->content = array_map(function( $index, $value ) {
+                    if (!in_array($index, $this->last_indexes))
+                        return $value;
+                }, array_keys($this->content), $this->content);
+                $this->content = array_filter($this->content);
+                //$this->content = array_values( $this->content );
+            } elseif (empty($this->where) && empty($this->last_indexes)) {
+                $this->content = array();
+            }
 
-				// Loop again through each row,  get columns and values
-				foreach( $row as $column => $value ) {
-					// If each of the column is provided in the where statement
-					if( in_array( $column, array_keys( $this->where ) ) ) {
-						// To be sure the where column value and existing row column value matches
-						if( $this->where[ $column ] == $row[ $column ] ) {
-							// Append all to be modified row into a array variable
-							$r[] = $row;
+            $return = true;
+            $this->delete = false;
+        } elseif (!empty($this->update)) {
+            $this->_update();
+            $this->update = [];
+        } else
+            $return = false;
+        $this->commit();
+        return $this;
+    }
 
-							// Append also each row array key
-							$this->last_indexes[] = $index;
-						}
-						else 
-							continue;
-					}
-				}
-			}
-			return $r;
-		}
-	}
+    private function where_result() {
+        /*
+          Validates the where statement values
+         */
 
-	
-	private function where_and_result() {
-		/*
-			Validates the where statement values
-		*/
-		$r = [];
+        if ($this->merge == 'AND') {
+            return $this->where_and_result();
+        } else {
+            $r = [];
 
-		// Loop through the db rows. Ge the index and row
-		foreach( $this->content as $index => $row ) {
+            // Loop through the existing values. Ge the index and row
+            foreach ($this->content as $index => $row) {
 
-			// Make sure its array data type
-			$row = ( array ) $row;
+                // Make sure its array data type
+                $row = (array) $row;
 
-			
-			//check if the row = where['col'=>'val', 'col2'=>'val2']
-			if(!array_diff($this->where,$row)) {
-				$r[] = $row;
-				// Append also each row array key
-				$this->last_indexes[] = $index;			
-				
-			}
-			else continue ;
-			
+                // Loop again through each row,  get columns and values
+                foreach ($row as $column => $value) {
+                    // If each of the column is provided in the where statement
+                    if (in_array($column, array_keys($this->where))) {
+                        // To be sure the where column value and existing row column value matches
+                        if ($this->where[$column] == $row[$column]) {
+                            // Append all to be modified row into a array variable
+                            $r[] = $row;
 
-		}
-		return $r;
-	}	
+                            // Append also each row array key
+                            $this->last_indexes[] = $index;
+                        } else {
+                            continue;
+                        }
+                    }
+                }
+            }
+            return $r;
+        }
+    }
 
-	public function to_xml( $from, $to ) {
-		$this->from( $from );
-		if( $this->content ) {
-			$element = pathinfo( $from, PATHINFO_FILENAME );
-			$xml = '
+    private function where_and_result() {
+        /*
+          Validates the where statement values
+         */
+        $r = [];
+
+        // Loop through the db rows. Ge the index and row
+        foreach ($this->content as $index => $row) {
+
+            // Make sure its array data type
+            $row = (array) $row;
+
+
+            //check if the row = where['col'=>'val', 'col2'=>'val2']
+            if (!array_diff($this->where, $row)) {
+                $r[] = $row;
+                // Append also each row array key
+                $this->last_indexes[] = $index;
+            } else {
+                continue;
+            }
+        }
+        return $r;
+    }
+
+    public function to_xml($from, $to) {
+        $this->from($from);
+        if ($this->content) {
+            $element = pathinfo($from, PATHINFO_FILENAME);
+            $xml = '
 			<?xml version="1.0"?>
 				<' . $element . '>
 ';
-			
-			foreach( $this->content as $index => $value ) {
-				$xml .= '
+
+            foreach ($this->content as $index => $value) {
+                $xml .= '
 				<DATA>';
-				foreach( $value as $col => $val ) {
-					$xml .= sprintf( '
-					<%s>%s</%s>', $col, $val, $col );
-				}
-				$xml .= '
+                foreach ($value as $col => $val) {
+                    $xml .= sprintf('
+					<%s>%s</%s>', $col, $val, $col);
+                }
+                $xml .= '
 				</DATA>
 				';
-			}
-			$xml .= '</' . $element . '>';
+            }
+            $xml .= '</' . $element . '>';
 
-			$xml = trim( $xml );
-			file_put_contents( $to, $xml );
-			return true;
-		}
-		return false;
-	}
-	
-	public function to_mysql( $from, $to, $create_table = true ) {
-		$this->from( $from );
-		if( $this->content ) {
-			$table = pathinfo( $to, PATHINFO_FILENAME );
+            $xml = trim($xml);
+            file_put_contents($to, $xml);
+            return true;
+        }
+        return false;
+    }
 
-			$sql = "-- PHP-JSONDB JSON to MySQL Dump
+    public function to_mysql($from, $to, $create_table = true) {
+        $this->from($from);
+        if ($this->content) {
+            $table = pathinfo($to, PATHINFO_FILENAME);
+
+            $sql = "-- PHP-JSONDB JSON to MySQL Dump
 --\r\n\r\n";
-			if( $create_table ) {
-				$sql .= "
+            if ($create_table) {
+                $sql .= "
 -- Table Structure for `" . $table . "`
 --
 
 CREATE TABLE `" . $table . "`
 	(
 					";
-				$first_row = ( array ) $this->content[ 0 ];
-				foreach( array_keys( $first_row ) as $column ) {
-					$s = '`' . $column . '` ' . $this->_to_mysql_type( gettype( $first_row[ $column ] ) ) ;
-					$s .= ( next( $first_row ) ? ',' : '' );
-					$sql .= $s;
-				}
-				$sql .= "
+                $first_row = (array) $this->content[0];
+                foreach (array_keys($first_row) as $column) {
+                    $s = '`' . $column . '` ' . $this->_to_mysql_type(gettype($first_row[$column]));
+                    $s .= ( next($first_row) ? ',' : '' );
+                    $sql .= $s;
+                }
+                $sql .= "
 	);\r\n";
-			}
+            }
 
-			foreach( $this->content as $values ) {
-				$values = ( array ) $values;
-				$v = array_map( function( $vv ) {
-					$vv = ( is_array( $vv ) || is_object( $vv ) ? serialize( $vv ) : $vv );
-					return "'" . addslashes( $vv ) . "'";
-				}, array_values( $values ) );
+            foreach ($this->content as $values) {
+                $values = (array) $values;
+                $v = array_map(function( $vv ) {
+                    $vv = ( is_array($vv) || is_object($vv) ? serialize($vv) : $vv );
+                    return "'" . addslashes($vv) . "'";
+                }, array_values($values));
 
-				$c = array_map( function( $vv ) {
-					return "`" . $vv . "`";
-				}, array_keys( $values ) );
-				$sql .= sprintf( "INSERT INTO `%s` ( %s ) VALUES ( %s );\n", $table, implode( ', ', $c ), implode( ', ', $v ) );
-			}
-			file_put_contents( $to, $sql );
-			return true;
-		}
-		else 
-			return false;
-	}
+                $c = array_map(function( $vv ) {
+                    return "`" . $vv . "`";
+                }, array_keys($values));
+                $sql .= sprintf("INSERT INTO `%s` ( %s ) VALUES ( %s );\n", $table, implode(', ', $c), implode(', ', $v));
+            }
+            file_put_contents($to, $sql);
+            return true;
+        } else
+            return false;
+    }
 
-	private function _to_mysql_type( $type ) {
-		if( $type == 'bool' ) 
-			$return = 'BOOLEAN';
-		elseif( $type == 'integer' ) 
-			$return = 'INT';
-		elseif( $type == 'double' ) 
-			$return = strtoupper( $type );
-		else
-			$return = 'VARCHAR( 255 )';
-		return $return;
-	}
+    private function _to_mysql_type($type) {
+        if ($type == 'bool')
+            $return = 'BOOLEAN';
+        elseif ($type == 'integer')
+            $return = 'INT';
+        elseif ($type == 'double')
+            $return = strtoupper($type);
+        else
+            $return = 'VARCHAR( 255 )';
+        return $return;
+    }
 
-	public function order_by( $column, $order = self::ASC ) {
-		$this->order_by = [ $column, $order ];
-		return $this;
-	}
+    public function order_by($column, $order = self::ASC) {
+        $this->order_by = [$column, $order];
+        return $this;
+    }
 
-	private function _process_order_by( $content ) {
-		if( $this->order_by && $content && in_array( $this->order_by[ 0 ], array_keys( ( array ) $content[ 0 ] ) ) ) {
-			/*
-				* Check if order by was specified
-				* Check if there's actually a result of the query
-				* Makes sure the column  actually exists in the list of columns
-			*/
+    private function _process_order_by($content) {
+        if ($this->order_by && $content && in_array($this->order_by[0], array_keys((array) $content[0]))) {
+            /*
+             * Check if order by was specified
+             * Check if there's actually a result of the query
+             * Makes sure the column  actually exists in the list of columns
+             */
 
-			list( $sort_column, $order_by ) = $this->order_by;
-			$sort_keys = [];
-			$sorted = [];
+            list( $sort_column, $order_by ) = $this->order_by;
+            $sort_keys = [];
+            $sorted = [];
 
-			foreach( $content as $index => $value ) {
-				$value = ( array ) $value;
-				// Save the index and value so we can use them to sort
-				$sort_keys[ $index ] = $value[ $sort_column ];
-			}
-			
-			// Let's sort!
-			if( $order_by == self::ASC ) {
-				asort( $sort_keys );
-			}
-			elseif( $order_by == self::DESC ) {
-				arsort( $sort_keys );
-			}
+            foreach ($content as $index => $value) {
+                $value = (array) $value;
+                // Save the index and value so we can use them to sort
+                $sort_keys[$index] = $value[$sort_column];
+            }
 
-			// We are done with sorting, lets use the sorted array indexes to pull back the original content and return new content
-			foreach( $sort_keys as $index => $value ) {
-				$sorted[ $index ] = ( array ) $content[ $index ];
-			}
+            // Let's sort!
+            if ($order_by == self::ASC) {
+                asort($sort_keys);
+            } elseif ($order_by == self::DESC) {
+                arsort($sort_keys);
+            }
 
-			$content = $sorted;
-		}
+            // We are done with sorting, lets use the sorted array indexes to pull back the original content and return new content
+            foreach ($sort_keys as $index => $value) {
+                $sorted[$index] = (array) $content[$index];
+            }
 
-		return $content;
-	}
+            $content = $sorted;
+        }
 
-	public function get() {
-		if($this->where != null) {
-			$content = $this->where_result();
-		}
-		else 
-			$content = $this->content; 
-		
-		if( $this->select && !in_array( '*', $this->select ) ) {
-			$r = [];
-			foreach( $content as $id => $row ) {
-				$row = ( array ) $row;
-				foreach( $row as $key => $val ) {
-					if( in_array( $key, $this->select ) ) {
-						$r[ $id ][ $key ] = $val;
-					} 
-					else 
-						continue;
-				}
-			}
-			$content = $r;
-		}
+        return $content;
+    }
 
-		// Finally, lets do sorting :)
-		$content = $this->_process_order_by( $content );
-		
-		return $content;
-	}
-} 
+    public function get() {
+        if ($this->where != null) {
+            $content = $this->where_result();
+        } else {
+            $content = $this->content;
+        }
+
+        if ($this->select && !in_array('*', $this->select)) {
+            $r = [];
+            foreach ($content as $id => $row) {
+                $row = (array) $row;
+                foreach ($row as $key => $val) {
+                    if (in_array($key, $this->select)) {
+                        $r[$id][$key] = $val;
+                    } else
+                        continue;
+                }
+            }
+            $content = $r;
+        }
+
+        // Finally, lets do sorting :)
+        $content = $this->_process_order_by($content);
+
+
+        return $content;
+    }
+
+}
